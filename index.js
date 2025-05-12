@@ -306,6 +306,42 @@ app.get('/manager/feedback', async (req, res) => {
   }
 });
 
+app.patch('/manager/feedback', async (req, res) => {
+  const { id } = req.body;
+  if (!id) {
+    return res.status(400).json({ error: 'id обязателен' });
+  }
+  try {
+    const query = 'UPDATE feedbacks SET is_visible = true WHERE id = $1';
+    const result = await pool.query(query, [id]);
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: 'Отзыв не найден' });
+    }
+    res.status(200).json({ message: 'Отзыв опубликован' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.delete('/manager/feedback', async (req, res) => {
+  const { id } = req.body;
+  if (!id) {
+    return res.status(400).json({ error: 'id обязателен' });
+  }
+  try {
+    const query = 'DELETE FROM feedbacks WHERE id = $1';
+    const result = await pool.query(query, [id]);
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: 'Отзыв не найден' });
+    }
+    res.status(200).json({ message: 'Отзыв удален' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 app.listen(port, () => {
   console.log(`Server is running on http://localhost:${port}`);
 });
