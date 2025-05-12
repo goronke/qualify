@@ -355,6 +355,19 @@ app.get('/user/article', async (req, res) => {
   }
 });
 
+app.get('/user/sports', async (req, res) => {
+  try {
+    const query = 'SELECT id, name, image FROM kinds_of_sport';
+    const result = await pool.query(query);
+    res.status(200).json({
+      sports: result.rows
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 app.listen(port, () => {
   console.log(`Server is running on http://localhost:${port}`);
 });
