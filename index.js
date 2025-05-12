@@ -249,6 +249,28 @@ app.post('/manager/article', async (req, res) => {
   }
 });
 
+app.put('/manager/article', async (req, res) => {
+  const { id, name, created, description, image } = req.body;
+  if (!id || !name || !created || !description || !image) {
+    return res.status(400).json({ error: 'Все поля обязательны: id, name, created, description, image' });
+  }
+  try {
+    const query = `
+      UPDATE promo
+      SET "name" = $1, created = $2, description = $3, image = $4
+      WHERE id = $5
+    `;
+    const result = await pool.query(query, [name, created, description, image, id]);
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: 'Статья не найдена' });
+    }
+    res.status(200).json({ message: 'Статья изменена' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 app.listen(port, () => {
   console.log(`Server is running on http://localhost:${port}`);
 });
