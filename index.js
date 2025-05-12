@@ -368,6 +368,45 @@ app.get('/user/sports', async (req, res) => {
   }
 });
 
+app.get('/user/sections', async (req, res) => {
+  const { sportId, clientId } = req.query;
+  if (!sportId || !clientId) {
+    return res.status(400).json({ error: 'sportId и clientId обязательны' });
+  }
+  try {
+    const query = `
+      SELECT
+         g.name AS name,
+         c.name AS coachName,
+         c.qualify AS coachQualify,
+         g.min_age AS minAge,
+         g.max_age AS maxAge,
+         g.clients_count - COUNT(cg.id) AS spotsLeft
+      FROM groups g
+      JOIN kinds_of_sport kos ON kos.id = g.kind_of_sport_id
+      JOIN couches c ON g.couch_id = c.id
+      LEFT JOIN clients_groups cg ON g.id = cg.group_id
+      JOIN (
+         SELECT
+             id,
+             EXTRACT(YEAR FROM AGE(current_date, date_of_birth)) AS age
+         FROM clients
+         WHERE id = $2
+      ) cl ON cl.age BETWEEN g.min_age AND g.max_age
+      WHERE g.kind_of_sport_id = $1
+      GROUP BY g.id, kos.name, c.name, c.qualify, g.name, g.min_age, g.max_age, g.clients_count
+      HAVING g.clients_count - COUNT(cg.id) > 0;
+    `;
+    const result = await pool.query(query, [sportId, clientId]);
+    res.status(200).json({
+      groups: result.rows
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 app.listen(port, () => {
   console.log(`Server is running on http://localhost:${port}`);
 });
