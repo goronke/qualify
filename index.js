@@ -289,6 +289,23 @@ app.delete('/manager/article', async (req, res) => {
   }
 });
 
+app.get('/manager/feedback', async (req, res) => {
+  try {
+    const query = `
+      SELECT f.id, f.name, c.id as clientId, c.name as clientName, f.created_at as created, f.comment, f.rating, f.is_visible as isVisible
+      FROM feedbacks f
+      JOIN clients c ON f.client_id = c.id
+    `;
+    const result = await pool.query(query);
+    res.status(200).json({
+      feedbacks: result.rows
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 app.listen(port, () => {
   console.log(`Server is running on http://localhost:${port}`);
 });
