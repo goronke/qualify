@@ -459,6 +459,44 @@ app.get('/user/schedule', async (req, res) => {
   }
 });
 
+app.get('/user/main', async (req, res) => {
+  const { id } = req.query;
+  if (!id) {
+    return res.status(400).json({ error: 'id обязателен' });
+  }
+  try {
+    // Получаем данные пользователя
+    const userQuery = 'SELECT name, phone_number as "phoneNumber", date_of_birth as "dateOfBirth", size FROM clients WHERE id = $1';
+    const userResult = await pool.query(userQuery, [id]);
+    if (userResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Пользователь не найден' });
+    }
+    const user = userResult.rows[0];
+
+    // Получаем группы пользователя
+    const groupsQuery = `
+      SELECT g.id, g.name, g.min_age as "minAge", g.max_age as "maxAge", g.kind_of_sport_id as "sportId", kos.name as "sportName", g.couch_id as "coachId", c.name as "coachName", c.qualify as "coachQualify"
+      FROM groups g
+      JOIN clients_groups cg ON cg.group_id = g.id
+      JOIN kinds_of_sport kos ON kos.id = g.kind_of_sport_id
+      JOIN couches c ON c.id = g.couch_id
+      WHERE cg.client_id = $1
+    `;
+    const groupsResult = await pool.query(groupsQuery, [id]);
+
+    res.status(200).json({
+      name: user.name,
+      phoneNumber: user.phoneNumber,
+      dateOfBirth: user.dateOfBirth,
+      size: user.size,
+      groups: groupsResult.rows
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 app.listen(port, () => {
   console.log(`Server is running on http://localhost:${port}`);
 });
