@@ -407,6 +407,58 @@ app.get('/user/sections', async (req, res) => {
   }
 });
 
+app.post('/user/sections', async (req, res) => {
+  const { groupId, clientId } = req.query;
+  if (!groupId || !clientId) {
+    return res.status(400).json({ error: 'groupId и clientId обязательны' });
+  }
+  try {
+    const query = 'INSERT INTO clients_groups (client_id, group_id) VALUES ($1, $2)';
+    await pool.query(query, [clientId, groupId]);
+    res.status(200).json({
+      message: 'Вы записались в новую секцию. Информация о расписании секции появилась у вас в календаре. При первом посещении необходимо оплатить абонемент.'
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.get('/user/schedule', async (req, res) => {
+  const { clientId } = req.query;
+  if (!clientId) {
+    return res.status(400).json({ error: 'clientId обязателен' });
+  }
+  try {
+    const query = `
+      SELECT
+        g.kind_of_sport_id AS sportId,
+        kos.name AS sportName,
+        cl.place_id AS placeId,
+        p.name AS placeName,
+        cl.date_time AS "timestamp",
+        cl.group_id AS groupId,
+        g.name AS groupName,
+        cl.duration AS duration
+      FROM classes cl
+      JOIN place p ON cl.place_id = p.id
+      JOIN groups g ON cl.group_id = g.id
+      JOIN kinds_of_sport kos ON g.kind_of_sport_id = kos.id
+      JOIN clients_groups cg ON cg.group_id = g.id
+      WHERE cg.client_id = $1
+        AND cl.group_id IS NOT NULL
+      ORDER BY cl.date_time;
+    `;
+    const result = await pool.query(query, [clientId]);
+    res.status(200).json({
+      classes: result.rows
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 app.listen(port, () => {
   console.log(`Server is running on http://localhost:${port}`);
 });
