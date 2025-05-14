@@ -549,6 +549,115 @@ app.post('/admin/client', async (req, res) => {
   }
 });
 
+app.get('/admin/client', async (req, res) => {
+  try {
+    // Получаем базовую информацию о клиентах
+    const clientsQuery = `
+      SELECT 
+        id, 
+        name, 
+        date_of_birth,
+        EXTRACT(YEAR FROM AGE(CURRENT_DATE, date_of_birth)) as age
+      FROM clients;
+    `;
+    const clientsResult = await pool.query(clientsQuery);
+    
+    // Для каждого клиента получаем группы и абонементы
+    const clients = await Promise.all(clientsResult.rows.map(async (client) => {
+      // Получаем группы клиента
+      const groupsQuery = `
+        SELECT 
+          g.id AS group_id,
+          g.name AS group_name,
+          ks.name AS kind_of_sport_name
+        FROM 
+          clients_groups cg
+        JOIN 
+          "groups" g ON cg.group_id = g.id
+        JOIN 
+          kinds_of_sport ks ON g.kind_of_sport_id = ks.id
+        WHERE 
+          cg.client_id = $1;
+      `;
+      const groupsResult = await pool.query(groupsQuery, [client.id]);
+      
+      // Модифицированный запрос для абонементов с проверкой дат
+      const abonementsQuery = `
+        SELECT 
+          a.name AS name,
+          at.count_of_classes AS "totalClasses",
+          (
+            at.count_of_classes - COALESCE(
+              (
+                SELECT COUNT(*)
+                FROM classes cl
+                JOIN groups g ON cl.group_id = g.id
+                JOIN clients_groups cg ON cg.group_id = g.id AND cg.client_id = p.client_id
+                WHERE g.kind_of_sport_id = a.kind_of_sport_id
+                  AND cl.status = 'Проведено'
+                  AND cl.date_time >= p.date
+              ),
+            0)
+          ) AS "countToExpire",
+          CASE 
+            WHEN p.date + at.duration > NOW() 
+            THEN (p.date + at.duration)::timestamp 
+            ELSE NULL 
+          END as "timeToExpire",
+          ks.name AS "sport"
+        FROM payments p
+        JOIN abonements a ON p.abonement_id = a.id
+        JOIN abonement_types at ON a.type_id = at.id
+        JOIN kinds_of_sport ks ON a.kind_of_sport_id = ks.id
+        WHERE p.client_id = $1
+        AND p.date + at.duration > NOW();  -- получаем только активные абонементы
+      `;
+      const abonementsResult = await pool.query(abonementsQuery, [client.id]);
+
+      // Форматируем время до истечения абонемента
+      const formattedAbonements = abonementsResult.rows.map(abonement => ({
+        name: abonement.name,
+        totalClasses: parseInt(abonement.totalClasses),
+        countToExpire: parseInt(abonement.countToExpire),
+        timeToExpire: abonement.timeToExpire ? 
+          new Date(abonement.timeToExpire).toISOString() : 
+          null,
+        sport: abonement.sport
+      }));
+
+      // Форматируем группы
+      const formattedGroups = groupsResult.rows.map(group => ({
+        id: group.group_id,
+        name: group.group_name,
+        sportName: group.kind_of_sport_name
+      }));
+
+      return {
+        id: client.id,
+        name: client.name,
+        age: parseInt(client.age),
+        groups: formattedGroups,
+        abonements: formattedAbonements
+      };
+    }));
+
+    res.status(200).json({
+      clients: clients
+    });
+  } catch (err) {
+    console.error('Error details:', {
+      message: err.message,
+      stack: err.stack,
+      query: err.query,
+      position: err.position
+    });
+    res.status(500).json({ 
+      error: 'Internal server error',
+      details: err.message
+    });
+  }
+});
+
 app.listen(port, () => {
   console.log(`Server is running on http://localhost:${port}`);
 });
