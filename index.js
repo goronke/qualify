@@ -658,6 +658,64 @@ app.get('/admin/client', async (req, res) => {
   }
 });
 
+app.put('/admin/client', async (req, res) => {
+  const { id, name, phone_number, dateOfBirth, size } = req.body;
+
+  // Проверка обязательных полей
+  if (!id || !name || !phone_number || !dateOfBirth || !size) {
+    return res.status(400).json({ 
+      error: 'All fields (id, name, phone_number, dateOfBirth, size) are required' 
+    });
+  }
+
+  try {
+    const query = `
+      UPDATE public.clients
+      SET 
+        name = $1,
+        phone_number = $2,
+        date_of_birth = to_timestamp($3),
+        "size" = $4
+      WHERE id = $5
+      RETURNING 
+        id,
+        name,
+        phone_number,
+        EXTRACT(EPOCH FROM date_of_birth)::bigint AS "dateOfBirth",
+        "size";
+    `;
+    
+    const { rows } = await pool.query(query, [
+      name,
+      phone_number,
+      dateOfBirth,
+      size,
+      id
+    ]);
+
+    // Проверяем, был ли обновлен клиент
+    if (rows.length === 0) {
+      return res.status(404).json({ 
+        error: 'Client not found' 
+      });
+    }
+
+    // Возвращаем обновленные данные клиента
+    res.status(200).json(rows[0]);
+  } catch (err) {
+    console.error('Error details:', {
+      message: err.message,
+      stack: err.stack,
+      query: err.query,
+      position: err.position
+    });
+    res.status(500).json({ 
+      error: 'Internal server error',
+      details: err.message
+    });
+  }
+});
+
 app.listen(port, () => {
   console.log(`Server is running on http://localhost:${port}`);
 });
