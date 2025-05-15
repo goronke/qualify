@@ -376,12 +376,13 @@ app.get('/user/sections', async (req, res) => {
   try {
     const query = `
       SELECT
-         g.name AS name,
-         c.name AS coachName,
-         c.qualify AS coachQualify,
-         g.min_age AS minAge,
-         g.max_age AS maxAge,
-         g.clients_count - COUNT(cg.id) AS spotsLeft
+        g.id AS id,
+        g.name AS name,
+        c.name AS coachName,
+        c.qualify AS coachQualify,
+        g.min_age AS minAge,
+        g.max_age AS maxAge,
+        g.clients_count - COUNT(cg.id) AS spotsLeft
       FROM groups g
       JOIN kinds_of_sport kos ON kos.id = g.kind_of_sport_id
       JOIN couches c ON g.couch_id = c.id
@@ -408,7 +409,7 @@ app.get('/user/sections', async (req, res) => {
 });
 
 app.post('/user/sections', async (req, res) => {
-  const { groupId, clientId } = req.query;
+  const { groupId, clientId } = req.body;
   if (!groupId || !clientId) {
     return res.status(400).json({ error: 'groupId и clientId обязательны' });
   }
@@ -515,33 +516,49 @@ app.get('/user/feedback', async (req, res) => {
   }
 });
 
-app.post('/admin/client', async (req, res) => {
-  const { name, phoneNumber, dateOfBirth, size } = req.body;
-
-  // Проверка обязательных полей
-  if (!name || !phoneNumber || !dateOfBirth || !size) {
-    return res.status(400).json({ 
-      error: 'All fields (name, phoneNumber, dateOfBirth, size) are required' 
-    });
+app.post('/auth', async (req, res) => {
+  const { phone, password } = req.body;
+  if (!phone || !password) {
+    return res.status(400).json({ error: 'phone and password required' });
   }
+  try {
+    const query = 'SELECT id, name FROM clients WHERE phone_number = $1 AND password = $2';
+    const { rows } = await pool.query(query, [phone, password]);
+    if (rows.length === 0) {
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
+    res.status(200).json({ id: rows[0].id, name: rows[0].name });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
 
+app.get('/admin/schedule', async (req, res) => {
   try {
     const query = `
-      INSERT INTO clients (name, phone_number, date_of_birth, "size")
-      VALUES ($1, $2, $3, $4)
-      RETURNING id;
+      SELECT
+        cl.id AS "classId",
+        ch.name AS "coachName",
+        ks.id AS "sportId",
+        ks.name AS "sportName",
+        pl.id AS "placeId",
+        pl.name AS "placeName",
+        cl.date_time AS "timestamp",
+        gr.id AS "groupId",
+        gr.name AS "groupName",
+        cl.duration AS "duration"
+      FROM public.classes cl
+      JOIN public.place pl ON cl.place_id = pl.id
+      LEFT JOIN public."groups" gr ON cl.group_id = gr.id
+      LEFT JOIN public.couches ch ON gr.couch_id = ch.id
+      LEFT JOIN public.kinds_of_sport ks ON gr.kind_of_sport_id = ks.id
+      ORDER BY cl.date_time;
     `;
+    const { rows } = await pool.query(query);
     
-    const { rows } = await pool.query(query, [
-      name,
-      phoneNumber,
-      dateOfBirth,
-      size
-    ]);
-
-    // Возвращаем ID созданного клиента
-    res.status(201).json({
-      id: rows[0].id
+    res.status(200).json({
+      classes: rows
     });
   } catch (err) {
     console.error(err);
@@ -549,170 +566,109 @@ app.post('/admin/client', async (req, res) => {
   }
 });
 
-app.get('/admin/client', async (req, res) => {
+app.delete('/admin/schedule', async (req, res) => {
+  const { id } = req.body;
+  if (!id) {
+    return res.status(400).json({ error: 'id обязателен' });
+  }
+
   try {
-    // Получаем базовую информацию о клиентах
-    const clientsQuery = `
-      SELECT 
-        id, 
-        name, 
-        date_of_birth,
-        EXTRACT(YEAR FROM AGE(CURRENT_DATE, date_of_birth)) as age
-      FROM clients;
-    `;
-    const clientsResult = await pool.query(clientsQuery);
+    const query = 'DELETE FROM public.classes WHERE id = $1';
+    const result = await pool.query(query, [id]);
     
-    // Для каждого клиента получаем группы и абонементы
-    const clients = await Promise.all(clientsResult.rows.map(async (client) => {
-      // Получаем группы клиента
-      const groupsQuery = `
-        SELECT 
-          g.id AS group_id,
-          g.name AS group_name,
-          ks.name AS kind_of_sport_name
-        FROM 
-          clients_groups cg
-        JOIN 
-          "groups" g ON cg.group_id = g.id
-        JOIN 
-          kinds_of_sport ks ON g.kind_of_sport_id = ks.id
-        WHERE 
-          cg.client_id = $1;
-      `;
-      const groupsResult = await pool.query(groupsQuery, [client.id]);
-      
-      // Модифицированный запрос для абонементов с проверкой дат
-      const abonementsQuery = `
-        SELECT 
-          a.name AS name,
-          at.count_of_classes AS "totalClasses",
-          (
-            at.count_of_classes - COALESCE(
-              (
-                SELECT COUNT(*)
-                FROM classes cl
-                JOIN groups g ON cl.group_id = g.id
-                JOIN clients_groups cg ON cg.group_id = g.id AND cg.client_id = p.client_id
-                WHERE g.kind_of_sport_id = a.kind_of_sport_id
-                  AND cl.status = 'Проведено'
-                  AND cl.date_time >= p.date
-              ),
-            0)
-          ) AS "countToExpire",
-          CASE 
-            WHEN p.date + at.duration > NOW() 
-            THEN (p.date + at.duration)::timestamp 
-            ELSE NULL 
-          END as "timeToExpire",
-          ks.name AS "sport"
-        FROM payments p
-        JOIN abonements a ON p.abonement_id = a.id
-        JOIN abonement_types at ON a.type_id = at.id
-        JOIN kinds_of_sport ks ON a.kind_of_sport_id = ks.id
-        WHERE p.client_id = $1
-        AND p.date + at.duration > NOW();  -- получаем только активные абонементы
-      `;
-      const abonementsResult = await pool.query(abonementsQuery, [client.id]);
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: 'Занятие не найдено' });
+    }
 
-      // Форматируем время до истечения абонемента
-      const formattedAbonements = abonementsResult.rows.map(abonement => ({
-        name: abonement.name,
-        totalClasses: parseInt(abonement.totalClasses),
-        countToExpire: parseInt(abonement.countToExpire),
-        timeToExpire: abonement.timeToExpire ? 
-          new Date(abonement.timeToExpire).toISOString() : 
-          null,
-        sport: abonement.sport
-      }));
-
-      // Форматируем группы
-      const formattedGroups = groupsResult.rows.map(group => ({
-        id: group.group_id,
-        name: group.group_name,
-        sportName: group.kind_of_sport_name
-      }));
-
-      return {
-        id: client.id,
-        name: client.name,
-        age: parseInt(client.age),
-        groups: formattedGroups,
-        abonements: formattedAbonements
-      };
-    }));
-
-    res.status(200).json({
-      clients: clients
+    res.status(200).json({ 
+      message: 'Занятие удалено' 
     });
   } catch (err) {
-    console.error('Error details:', {
-      message: err.message,
-      stack: err.stack,
-      query: err.query,
-      position: err.position
-    });
-    res.status(500).json({ 
-      error: 'Internal server error',
-      details: err.message
-    });
+    console.error(err);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
-app.put('/admin/client', async (req, res) => {
-  const { id, name, phone_number, dateOfBirth, size } = req.body;
+app.get('/admin/scheduleAddData', async (req, res) => {
+  try {
+    // Получаем виды спорта
+    const sportsQuery = `
+      SELECT 
+        ks.id AS "sportId",
+        ks.name AS "name"
+      FROM public.kinds_of_sport ks
+      ORDER BY ks.id;
+    `;
+    const sportsResult = await pool.query(sportsQuery);
+
+    // Получаем тренеров
+    const coachesQuery = `
+      SELECT 
+        ch.id AS "id",
+        ch.name AS "name",
+        ch.kind_of_sport_id AS "sportId"
+      FROM public.couches ch
+      ORDER BY ch.id;
+    `;
+    const coachesResult = await pool.query(coachesQuery);
+
+    // Получаем места проведения
+    const placesQuery = `
+      SELECT 
+        pl.id AS "id",
+        pl.name AS "name"
+      FROM public.place pl
+      ORDER BY pl.id;
+    `;
+    const placesResult = await pool.query(placesQuery);
+
+    // Получаем группы
+    const groupsQuery = `
+      SELECT 
+        gr.id AS "id",
+        gr.name AS "name",
+        gr.couch_id AS "coachId",
+        gr.kind_of_sport_id AS "sportId"
+      FROM public."groups" gr
+      ORDER BY gr.id;
+    `;
+    const groupsResult = await pool.query(groupsQuery);
+
+    res.status(200).json({
+      sports: sportsResult.rows,
+      coaches: coachesResult.rows,
+      places: placesResult.rows,
+      groups: groupsResult.rows
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.post('/admin/schedule', async (req, res) => {
+  const { placeId, groupId, timestamp, duration } = req.body;
 
   // Проверка обязательных полей
-  if (!id || !name || !phone_number || !dateOfBirth || !size) {
+  if (!placeId || !groupId || !timestamp || !duration) {
     return res.status(400).json({ 
-      error: 'All fields (id, name, phone_number, dateOfBirth, size) are required' 
+      error: 'Все поля обязательны: placeId, groupId, timestamp, duration' 
     });
   }
 
   try {
     const query = `
-      UPDATE public.clients
-      SET 
-        name = $1,
-        phone_number = $2,
-        date_of_birth = to_timestamp($3),
-        "size" = $4
-      WHERE id = $5
-      RETURNING 
-        id,
-        name,
-        phone_number,
-        EXTRACT(EPOCH FROM date_of_birth)::bigint AS "dateOfBirth",
-        "size";
+      INSERT INTO public.classes (place_id, group_id, date_time, duration)
+      VALUES ($1, $2, $3, $4)
     `;
-    
-    const { rows } = await pool.query(query, [
-      name,
-      phone_number,
-      dateOfBirth,
-      size,
-      id
-    ]);
+    await pool.query(query, [placeId, groupId, timestamp, duration]);
 
-    // Проверяем, был ли обновлен клиент
-    if (rows.length === 0) {
-      return res.status(404).json({ 
-        error: 'Client not found' 
-      });
-    }
-
-    // Возвращаем обновленные данные клиента
-    res.status(200).json(rows[0]);
+    res.status(201).json({
+      message: 'Новое занятие добавлено'
+    });
   } catch (err) {
-    console.error('Error details:', {
-      message: err.message,
-      stack: err.stack,
-      query: err.query,
-      position: err.position
-    });
-    res.status(500).json({ 
-      error: 'Internal server error',
-      details: err.message
-    });
+    console.error(err);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
