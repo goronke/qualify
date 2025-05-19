@@ -3,7 +3,8 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node index.js",
+    "dev": "nodemon index.js"
   },
   "keywords": [],
   "author": "",
@@ -11,14 +12,11 @@
   "dependencies": {
     "exceljs": "^4.4.0",
     "express": "^5.1.0",
+    "jsonwebtoken": "^9.0.2",
     "pg": "^8.15.6"
   },
   "devDependencies": {
     "nodemon": "^3.1.10"
   },
-  "description": "",
-"scripts": {
-  "start": "node index.js",
-  "dev": "nodemon index.js"
-}
+  "description": ""
 }

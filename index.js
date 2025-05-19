@@ -1,20 +1,49 @@
 const express = require('express');
+const jwt = require('jsonwebtoken');
 const { Pool } = require('pg');
 const ExcelJS = require('exceljs');
 const app = express();
 const port = 3000;
 
+const PermissionRoles = {
+  'Admin': 1,
+  'User': 2,
+  'Manager': 3,
+  'Accountant': 4,
+  'Coach': 5
+}
+
+const UserEndpointPerm = ['Admin', 'User'];
+const AdminEndpointPerm = ['Admin'];
+const ManagerEndpointPerm = ['Admin','Manager'];
+const AccountantEndpointPerm = ['Admin','Accountant'];
+const CoachEndpointPerm = ['Admin','Coach'];
+
 const pool = new Pool({
   user: 'postgres',
-  host: 'localhost',
-  database: 'qualify',
-  password: '3301',
+  host: 'database',
+  database: 'auth_service_db',
+  password: 'postgres',
   port: 5432,
 });
+
+const getPayloadToken = ({ cookies }) => {
+  const token = cookies?.['access-token'];
+  return jwt.decode(Array.isArray(token) ? token[0] : token);
+}
+
+const permissionMiddleware = (permRoles, request, response) => {
+  const payload = getPayloadToken(request);
+  if(permRoles.some((role) => payload?.role === PermissionRoles[role])) {
+    return null;
+  }
+  return res.status(403).json({ error: 'Недостаточно прав' })
+}
 
 app.use(express.json());
 
 app.get('/accountant/payments', async (req, res) => {
+  permissionMiddleware(AccountantEndpointPerm,req,res)
   const { startDate, endDate } = req.query;
   if (!startDate || !endDate) {
     return res.status(400).json({ error: 'startDate and endDate are required' });
@@ -65,6 +94,7 @@ app.get('/accountant/payments', async (req, res) => {
 });
 
 app.get('/accountant/salary', async (req, res) => {
+  permissionMiddleware(AccountantEndpointPerm,req,res)
   const { startDate, endDate } = req.query;
   if (!startDate || !endDate) {
     return res.status(400).json({ error: 'startDate and endDate are required' });
@@ -115,7 +145,8 @@ ORDER BY "К выплате в ГРОСС" DESC;
 });
 
 app.get('/coach/main', async (req, res) => {
-  const coachId = req.query.id;
+  permissionMiddleware(CoachEndpointPerm,req,res)
+  const coachId = getPayloadToken(req)?.id;
   if (!coachId) {
     return res.status(400).json({ error: 'id is required' });
   }
@@ -172,7 +203,8 @@ app.get('/coach/main', async (req, res) => {
 });
 
 app.get('/coach/schedule', async (req, res) => {
-  const coachId = req.query.id;
+  permissionMiddleware(CoachEndpointPerm,req,res)
+  const coachId = getPayloadToken(req)?.id;
   if (!coachId) {
     return res.status(400).json({ error: 'id is required' });
   }
@@ -215,6 +247,7 @@ app.get('/coach/schedule', async (req, res) => {
 });
 
 app.get('/manager/article', async (req, res) => {
+  permissionMiddleware(ManagerEndpointPerm,req,res)
   try {
     const query = 'SELECT id, name, created, description, image FROM promo';
     const result = await pool.query(query);
@@ -228,6 +261,7 @@ app.get('/manager/article', async (req, res) => {
 });
 
 app.post('/manager/article', async (req, res) => {
+  permissionMiddleware(ManagerEndpointPerm,req,res)
   const { name, created, description, image } = req.body;
   if (!name || !created || !description || !image) {
     return res.status(400).json({ error: 'Все поля обязательны: name, created, description, image' });
@@ -250,6 +284,7 @@ app.post('/manager/article', async (req, res) => {
 });
 
 app.put('/manager/article', async (req, res) => {
+  permissionMiddleware(ManagerEndpointPerm,req,res)
   const { id, name, created, description, image } = req.body;
   if (!id || !name || !created || !description || !image) {
     return res.status(400).json({ error: 'Все поля обязательны: id, name, created, description, image' });
@@ -272,6 +307,7 @@ app.put('/manager/article', async (req, res) => {
 });
 
 app.delete('/manager/article', async (req, res) => {
+  permissionMiddleware(ManagerEndpointPerm,req,res)
   const { id } = req.body;
   if (!id) {
     return res.status(400).json({ error: 'id обязателен' });
@@ -290,6 +326,7 @@ app.delete('/manager/article', async (req, res) => {
 });
 
 app.get('/manager/feedback', async (req, res) => {
+  permissionMiddleware(ManagerEndpointPerm,req,res)
   try {
     const query = `
       SELECT f.id, f.name, c.id as clientId, c.name as clientName, f.created_at as created, f.comment, f.rating, f.is_visible as isVisible
@@ -307,6 +344,7 @@ app.get('/manager/feedback', async (req, res) => {
 });
 
 app.patch('/manager/feedback', async (req, res) => {
+  permissionMiddleware(ManagerEndpointPerm,req,res)
   const { id } = req.body;
   if (!id) {
     return res.status(400).json({ error: 'id обязателен' });
@@ -325,6 +363,7 @@ app.patch('/manager/feedback', async (req, res) => {
 });
 
 app.delete('/manager/feedback', async (req, res) => {
+  permissionMiddleware(ManagerEndpointPerm,req,res)
   const { id } = req.body;
   if (!id) {
     return res.status(400).json({ error: 'id обязателен' });
@@ -344,6 +383,7 @@ app.delete('/manager/feedback', async (req, res) => {
 
 app.get('/user/article', async (req, res) => {
   try {
+    permissionMiddleware(UserEndpointPerm,req,res)
     const query = 'SELECT id, name, created, description, image FROM promo';
     const result = await pool.query(query);
     res.status(200).json({
@@ -357,6 +397,7 @@ app.get('/user/article', async (req, res) => {
 
 app.get('/user/sports', async (req, res) => {
   try {
+    permissionMiddleware(UserEndpointPerm,req,res)
     const query = 'SELECT id, name, image FROM kinds_of_sport';
     const result = await pool.query(query);
     res.status(200).json({
@@ -369,7 +410,9 @@ app.get('/user/sports', async (req, res) => {
 });
 
 app.get('/user/sections', async (req, res) => {
-  const { sportId, clientId } = req.query;
+  permissionMiddleware(UserEndpointPerm,req,res)
+  const clientId = getPayloadToken(req)?.id;
+  const { sportId } = req.query;
   if (!sportId || !clientId) {
     return res.status(400).json({ error: 'sportId и clientId обязательны' });
   }
@@ -409,7 +452,9 @@ app.get('/user/sections', async (req, res) => {
 });
 
 app.post('/user/sections', async (req, res) => {
-  const { groupId, clientId } = req.body;
+  permissionMiddleware(UserEndpointPerm,req,res)
+  const clientId = getPayloadToken(req)?.id;
+  const { groupId } = req.body;
   if (!groupId || !clientId) {
     return res.status(400).json({ error: 'groupId и clientId обязательны' });
   }
@@ -426,7 +471,8 @@ app.post('/user/sections', async (req, res) => {
 });
 
 app.get('/user/schedule', async (req, res) => {
-  const { clientId } = req.query;
+  permissionMiddleware(UserEndpointPerm,req,res)
+  const clientId = getPayloadToken(req)?.id;
   if (!clientId) {
     return res.status(400).json({ error: 'clientId обязателен' });
   }
@@ -461,7 +507,8 @@ app.get('/user/schedule', async (req, res) => {
 });
 
 app.get('/user/main', async (req, res) => {
-  const { id } = req.query;
+  permissionMiddleware(UserEndpointPerm,req,res)
+  const id = getPayloadToken(req)?.id;
   if (!id) {
     return res.status(400).json({ error: 'id обязателен' });
   }
@@ -499,6 +546,7 @@ app.get('/user/main', async (req, res) => {
 });
 
 app.get('/user/feedback', async (req, res) => {
+  permissionMiddleware(UserEndpointPerm,req,res)
   try {
     const query = `
       SELECT f.id, f.name, c.id as clientId, c.name as clientName, f.created_at as created, f.comment, f.rating
@@ -535,6 +583,7 @@ app.post('/auth', async (req, res) => {
 });
 
 app.get('/admin/schedule', async (req, res) => {
+  permissionMiddleware(AdminEndpointPerm,req,res)
   try {
     const query = `
       SELECT
@@ -567,6 +616,7 @@ app.get('/admin/schedule', async (req, res) => {
 });
 
 app.delete('/admin/schedule', async (req, res) => {
+  permissionMiddleware(AdminEndpointPerm,req,res)
   const { id } = req.body;
   if (!id) {
     return res.status(400).json({ error: 'id обязателен' });
@@ -590,6 +640,7 @@ app.delete('/admin/schedule', async (req, res) => {
 });
 
 app.get('/admin/scheduleAddData', async (req, res) => {
+  permissionMiddleware(AdminEndpointPerm,req,res)
   try {
     // Получаем виды спорта
     const sportsQuery = `
@@ -647,6 +698,7 @@ app.get('/admin/scheduleAddData', async (req, res) => {
 });
 
 app.post('/admin/schedule', async (req, res) => {
+  permissionMiddleware(AdminEndpointPerm,req,res)
   const { placeId, groupId, timestamp, duration } = req.body;
 
   // Проверка обязательных полей

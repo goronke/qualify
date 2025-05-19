@@ -1,0 +1,98 @@
+version: '3.5'
+
+services:
+  database:
+    image: postgres
+    restart: always
+    environment:
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_USER=postgres
+      - POSTGRES_DB=auth_service_db
+    container_name: postgres
+    volumes:
+      - ./pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 20s
+      retries: 10
+      start_period: 10s
+    networks:
+      - app-network
+
+  general:
+    build:
+      context: .
+      dockerfile: ./WinterService/Dockerfile
+    container_name: general_service_container
+    restart: always
+    environment:
+      - PORT=${PORT}
+    healthcheck:
+      test: ["CMD", "curl", "-f  http://localhost:3000/ || exit 1 "]
+      interval: 5s
+      timeout: 20s
+      retries: 10
+      start_period: 10s
+    volumes:
+      - ./WinterService/src:/app/src
+    networks:
+      - app-network
+
+  auth:
+    build:
+      context: .
+      dockerfile: ./AuthService/Dockerfile
+    container_name: auth_service_container
+    restart: always
+    environment:
+      - PORT=${PORT}
+    healthcheck:
+      test: ["CMD", "curl", "-f" , "http://localhost:4000/check"]
+      interval: 5s
+      timeout: 20s
+      retries: 10
+      start_period: 10s
+    depends_on:
+      database:
+        condition: service_healthy
+    volumes:
+      - ./AuthService/src:/app/auth/src
+    networks:
+      - app-network
+
+  pgadmin:
+    image: dpage/pgadmin4
+    restart: always
+    container_name: nest-pgadmin4
+    environment:
+      - PGADMIN_DEFAULT_EMAIL=admin@admin.com
+      - PGADMIN_DEFAULT_PASSWORD=pgadmin4
+    depends_on:
+      database:
+        condition: service_healthy
+    ports:
+      - '5050:80'
+    networks:
+      - app-network
+  nginx:
+    build:
+      context: .
+      dockerfile: ./NginxProxyService/DockerFile
+    container_name: proxy_service_container
+    restart: always
+    environment:
+      - PORT=${PORT}
+    depends_on:
+      auth:
+        condition: service_healthy
+    ports:
+      - '8000:8000'
+    volumes:
+      - ./NginxProxyService:/app/proxy
+    networks:
+      - app-network
+
+networks:
+  app-network:
+      driver: bridge
