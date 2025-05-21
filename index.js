@@ -724,6 +724,353 @@ app.post('/admin/schedule', async (req, res) => {
   }
 });
 
+app.get('/admin/coaches', async (req, res) => {
+  try {
+    const query = `
+      SELECT
+        ch.id,
+        ch.name,
+        ch.phone_number AS "phoneNumber",
+        ch.date_of_birth AS "dateOfBirth",
+        ch.qualify,
+        ks.name AS "sportName",
+        STRING_AGG(gr.name, ', ') AS "groupNames"
+      FROM public.couches ch
+      JOIN public.kinds_of_sport ks ON ch.kind_of_sport_id = ks.id
+      LEFT JOIN public."groups" gr ON gr.couch_id = ch.id
+      GROUP BY
+        ch.id, ch.name, ch.phone_number, ch.date_of_birth, ch.qualify, ks.name
+      ORDER BY ch.id;
+    `;
+    const { rows } = await pool.query(query);
+
+    // Преобразуем строку с группами в массив
+    const coaches = rows.map(coach => ({
+      ...coach,
+      groupNames: coach.groupNames ? coach.groupNames.split(', ') : []
+    }));
+
+    res.status(200).json({
+      coaches: coaches
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.get('/admin/coachAddData', async (req, res) => {
+  try {
+    // Получаем виды спорта
+    const sportsQuery = `
+      SELECT 
+        id,
+        name
+      FROM public.kinds_of_sport;
+    `;
+    const sportsResult = await pool.query(sportsQuery);
+
+    // Получаем квалификации
+    const qualifyQuery = `
+      SELECT 
+        id,
+        rank AS name
+      FROM public.coaches_salary
+      WHERE rank IS NOT NULL;
+    `;
+    const qualifyResult = await pool.query(qualifyQuery);
+
+    res.status(200).json({
+      sports: sportsResult.rows,
+      qualify: qualifyResult.rows
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.post('/admin/coach', async (req, res) => {
+  const { name, phoneNumber, dateOfBirth, qualifyId, sportId, password } = req.body;
+
+  // Проверка обязательных полей
+  if (!name || !phoneNumber || !dateOfBirth || !qualifyId || !sportId || !password) {
+    return res.status(400).json({ 
+      error: 'Все поля обязательны: name, phoneNumber, dateOfBirth, qualifyId, sportId, password' 
+    });
+  }
+
+  try {
+    const query = `
+      INSERT INTO public.couches (
+        name,
+        phone_number,
+        date_of_birth,
+        kind_of_sport_id,
+        password,
+        salary_id,
+        qualify
+      )
+      SELECT
+        $1,
+        $2,
+        $3::timestamp,
+        $4,
+        $5,
+        cs.id,
+        cs.rank
+      FROM public.coaches_salary cs
+      WHERE cs.id = $6
+    `;
+    await pool.query(query, [name, phoneNumber, dateOfBirth, sportId, password, qualifyId]);
+
+    res.status(201).json({
+      message: 'Тренер добавлен'
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.get('/admin/users', async (req, res) => {
+  try {
+    const query = `
+      SELECT
+        c.id,
+        c.name,
+        c.phone_number AS "phoneNumber",
+        TO_CHAR(c.date_of_birth, 'YYYY-MM-DD') AS "dateOfBirth",
+        c.size,
+        COALESCE(
+          json_agg(DISTINCT g.name) FILTER (WHERE g.name IS NOT NULL), 
+          '[]'::json
+        ) AS groups,
+        COALESCE(
+          json_agg(DISTINCT
+            CASE
+              WHEN p.id IS NOT NULL THEN a.name || ' - оплачен'
+              ELSE a.name || ' - не оплачен'
+            END
+          ) FILTER (WHERE a.id IS NOT NULL), 
+          '[]'::json
+        ) AS abonements
+      FROM public.clients c
+      LEFT JOIN public.clients_groups ctg ON ctg.client_id = c.id
+      LEFT JOIN public.groups g ON g.id = ctg.group_id
+      LEFT JOIN public.abonements a ON a.kind_of_sport_id IN (
+        SELECT g2.kind_of_sport_id
+        FROM public.clients_groups ctg2
+        JOIN public.groups g2 ON ctg2.group_id = g2.id
+        WHERE ctg2.client_id = c.id
+      )
+      LEFT JOIN public.payments p ON p.client_id = c.id AND p.abonement_id = a.id
+      GROUP BY c.id, c.name, c.phone_number, c.date_of_birth, c.size
+      ORDER BY c.id;
+    `;
+    
+    console.log('Executing query...');
+    const { rows } = await pool.query(query);
+    console.log('Query executed successfully, rows:', rows.length);
+
+    // Преобразуем JSON строки в массивы, с дополнительной проверкой
+    const users = rows.map(user => {
+      try {
+        return {
+          ...user,
+          groups: Array.isArray(user.groups) ? user.groups : JSON.parse(user.groups || '[]'),
+          abonements: Array.isArray(user.abonements) ? user.abonements : JSON.parse(user.abonements || '[]')
+        };
+      } catch (parseError) {
+        console.error('Error parsing JSON for user:', user.id, parseError);
+        return {
+          ...user,
+          groups: [],
+          abonements: []
+        };
+      }
+    });
+
+    console.log('Data processed successfully');
+    res.status(200).json({
+      users: users
+    });
+  } catch (err) {
+    console.error('Detailed error:', {
+      message: err.message,
+      stack: err.stack,
+      query: err.query,
+      position: err.position
+    });
+    res.status(500).json({ 
+      error: 'Internal server error',
+      details: err.message 
+    });
+  }
+});
+
+app.delete('/admin/user', async (req, res) => {
+  const { id } = req.body;
+  if (!id) {
+    return res.status(400).json({ error: 'id обязателен' });
+  }
+
+  try {
+    // Начинаем транзакцию
+    await pool.query('BEGIN');
+
+    // Удаляем связи пользователя с группами
+    const deleteGroupsQuery = 'DELETE FROM public.clients_groups WHERE client_id = $1';
+    await pool.query(deleteGroupsQuery, [id]);
+
+    // Обновляем платежи, устанавливая client_id в NULL
+    const updatePaymentsQuery = 'UPDATE public.payments SET client_id = NULL WHERE client_id = $1';
+    await pool.query(updatePaymentsQuery, [id]);
+
+    // Удаляем отзывы пользователя
+    const deleteFeedbacksQuery = 'DELETE FROM public.feedbacks WHERE client_id = $1';
+    await pool.query(deleteFeedbacksQuery, [id]);
+
+    // Удаляем самого пользователя
+    const deleteUserQuery = 'DELETE FROM public.clients WHERE id = $1';
+    const result = await pool.query(deleteUserQuery, [id]);
+
+    // Если пользователь не был найден
+    if (result.rowCount === 0) {
+      await pool.query('ROLLBACK');
+      return res.status(404).json({ error: 'Пользователь не найден' });
+    }
+
+    // Если все прошло успешно, подтверждаем транзакцию
+    await pool.query('COMMIT');
+
+    res.status(200).json({ 
+      message: 'Пользователь удален' 
+    });
+  } catch (err) {
+    // В случае ошибки откатываем транзакцию
+    await pool.query('ROLLBACK');
+    console.error(err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.get('/admin/groups', async (req, res) => {
+  try {
+    const query = `
+      SELECT
+        g.id,
+        g.name AS "group_title",
+        ks.name AS "kind_of_sport",
+        co.name AS "coach_name",
+        g.clients_count AS "max_clients",
+        (
+          SELECT COUNT(*)
+          FROM clients_groups cg
+          WHERE cg.group_id = g.id
+        ) AS "clients_count",
+        COALESCE(
+          (
+            SELECT json_agg(c.name ORDER BY c.name)
+            FROM clients_groups cg
+            JOIN clients c ON c.id = cg.client_id
+            WHERE cg.group_id = g.id
+          ),
+          '[]'::json
+        ) AS "clients"
+      FROM groups g
+      LEFT JOIN kinds_of_sport ks ON ks.id = g.kind_of_sport_id
+      LEFT JOIN couches co ON co.id = g.couch_id
+      ORDER BY g.id;
+    `;
+    const { rows } = await pool.query(query);
+
+    // Преобразуем JSON строки в массивы, если они еще не массивы
+    const groups = rows.map(group => ({
+      ...group,
+      clients: Array.isArray(group.clients) ? group.clients : JSON.parse(group.clients || '[]')
+    }));
+
+    res.status(200).json(groups);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.get('/admin/groupAddData', async (req, res) => {
+  try {
+    // Получаем тренеров
+    const coachesQuery = `
+      SELECT 
+        id, 
+        name, 
+        kind_of_sport_id AS "sportId"
+      FROM public.couches
+      ORDER BY id;
+    `;
+    const coachesResult = await pool.query(coachesQuery);
+
+    // Получаем виды спорта
+    const sportsQuery = `
+      SELECT 
+        id, 
+        name
+      FROM public.kinds_of_sport
+      ORDER BY id;
+    `;
+    const sportsResult = await pool.query(sportsQuery);
+
+    res.status(200).json({
+      coaches: coachesResult.rows,
+      sports: sportsResult.rows
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.post('/admin/group', async (req, res) => {
+  const { couchId, sportId, name, minAge, maxAge, clientsCount } = req.body;
+
+  // Проверка обязательных полей
+  if (!couchId || !sportId || !name || !minAge || !maxAge || !clientsCount) {
+    return res.status(400).json({ 
+      error: 'Все поля обязательны: couchId, sportId, name, minAge, maxAge, clientsCount' 
+    });
+  }
+
+  try {
+    const query = `
+      INSERT INTO public.groups (
+        couch_id,
+        kind_of_sport_id,
+        name,
+        min_age,
+        max_age,
+        clients_count
+      )
+      VALUES ($1, $2, $3, $4, $5, $6)
+    `;
+    await pool.query(query, [
+      couchId,
+      sportId,
+      name,
+      minAge,
+      maxAge,
+      clientsCount
+    ]);
+
+    res.status(201).json({
+      message: 'Группа добавлена'
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 app.listen(port, () => {
   console.log(`Server is running on http://localhost:${port}`);
 });
