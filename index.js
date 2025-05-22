@@ -220,14 +220,14 @@ app.get('/coach/schedule', async (req, res) => {
     // Получаем расписание занятий
     const classesQuery = `
       SELECT
-        kos.id as sportId,
-        kos.name as sportName,
-        p.id as placeId,
-        p.name as placeName,
+        kos.id as "sportId",
+        kos.name as "sportName",
+        p.id as "placeId",
+        p.name as "placeName",
         cl.date_time as "timestamp",
-        g.id as groupId,
-        g.name as groupName,
-        cl.duration as duration
+        g.id as "groupId",
+        g.name as "groupName",
+        cl.duration as "duration"
       FROM classes cl
       JOIN groups g ON g.id = cl.group_id
       JOIN place p ON p.id = cl.place_id
@@ -329,7 +329,15 @@ app.get('/manager/feedback', async (req, res) => {
   permissionMiddleware(ManagerEndpointPerm,req,res)
   try {
     const query = `
-      SELECT f.id, f.name, c.id as clientId, c.name as clientName, f.created_at as created, f.comment, f.rating, f.is_visible as isVisible
+      SELECT 
+        f.id, 
+        f.name, 
+        c.id as "clientId", 
+        c.name as "clientName", 
+        f.created_at as "createdAt", 
+        f.comment, 
+        f.rating, 
+        f.is_visible as "isVisible"
       FROM feedbacks f
       JOIN clients c ON f.client_id = c.id
     `;
@@ -479,14 +487,14 @@ app.get('/user/schedule', async (req, res) => {
   try {
     const query = `
       SELECT
-        g.kind_of_sport_id AS sportId,
-        kos.name AS sportName,
-        cl.place_id AS placeId,
-        p.name AS placeName,
+        g.kind_of_sport_id AS "sportId",
+        kos.name AS "sportName",
+        cl.place_id AS "placeId",
+        p.name AS "placeName",
         cl.date_time AS "timestamp",
-        cl.group_id AS groupId,
-        g.name AS groupName,
-        cl.duration AS duration
+        cl.group_id AS "groupId",
+        g.name AS "groupName",
+        cl.duration AS "duration"
       FROM classes cl
       JOIN place p ON cl.place_id = p.id
       JOIN groups g ON cl.group_id = g.id
@@ -549,7 +557,14 @@ app.get('/user/feedback', async (req, res) => {
   permissionMiddleware(UserEndpointPerm,req,res)
   try {
     const query = `
-      SELECT f.id, f.name, c.id as clientId, c.name as clientName, f.created_at as created, f.comment, f.rating
+      SELECT 
+        f.id, 
+        f.name, 
+        c.id as "clientId", 
+        c.name as "clientName", 
+        f.created_at as "createdAt", 
+        f.comment, 
+        f.rating
       FROM feedbacks f
       JOIN clients c ON f.client_id = c.id
       WHERE f.is_visible = true
@@ -960,15 +975,15 @@ app.get('/admin/groups', async (req, res) => {
     const query = `
       SELECT
         g.id,
-        g.name AS "group_title",
-        ks.name AS "kind_of_sport",
-        co.name AS "coach_name",
-        g.clients_count AS "max_clients",
+        g.name AS "groupTitle",
+        ks.name AS "kindOfSport",
+        co.name AS "coachName",
+        g.clients_count AS "maxClients",
         (
           SELECT COUNT(*)
           FROM clients_groups cg
           WHERE cg.group_id = g.id
-        ) AS "clients_count",
+        ) AS "clientsCount",
         COALESCE(
           (
             SELECT json_agg(c.name ORDER BY c.name)
