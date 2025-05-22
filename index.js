@@ -334,7 +334,7 @@ app.get('/manager/feedback', async (req, res) => {
         f.name, 
         c.id as "clientId", 
         c.name as "clientName", 
-        f.created_at as "createdAt", 
+        f.created_at as "created", 
         f.comment, 
         f.rating, 
         f.is_visible as "isVisible"
@@ -562,7 +562,7 @@ app.get('/user/feedback', async (req, res) => {
         f.name, 
         c.id as "clientId", 
         c.name as "clientName", 
-        f.created_at as "createdAt", 
+        f.created_at as "created", 
         f.comment, 
         f.rating
       FROM feedbacks f
