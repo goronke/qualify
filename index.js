@@ -427,13 +427,13 @@ app.get('/user/sections', async (req, res) => {
   try {
     const query = `
       SELECT
-        g.id AS id,
-        g.name AS name,
-        c.name AS coachName,
-        c.qualify AS coachQualify,
-        g.min_age AS minAge,
-        g.max_age AS maxAge,
-        g.clients_count - COUNT(cg.id) AS spotsLeft
+        g.id AS "id",
+        g.name AS "name",
+        c.name AS "coachName",
+        c.qualify AS "coachQualify",
+        g.min_age AS "minAge",
+        g.max_age AS "maxAge",
+        g.clients_count - COUNT(cg.id) AS "spotsLeft"
       FROM groups g
       JOIN kinds_of_sport kos ON kos.id = g.kind_of_sport_id
       JOIN couches c ON g.couch_id = c.id
@@ -572,6 +572,54 @@ app.get('/user/feedback', async (req, res) => {
     const result = await pool.query(query);
     res.status(200).json({
       feedbacks: result.rows
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.post('/user/feedback', async (req, res) => {
+  permissionMiddleware(UserEndpointPerm, req, res);
+  const clientId = getPayloadToken(req)?.id;
+  if (!clientId) {
+    return res.status(400).json({ error: 'Требуется авторизация' });
+  }
+
+  const { rating, comment, name } = req.body;
+  
+  // Проверка обязательных полей
+  if (!rating || !comment || !name) {
+    return res.status(400).json({ 
+      error: 'Все поля обязательны: rating, comment, name' 
+    });
+  }
+
+  // Проверка диапазона рейтинга (хотя это уже есть в БД, но лучше проверить на уровне API)
+  if (rating < 1 || rating > 5) {
+    return res.status(400).json({ 
+      error: 'Рейтинг должен быть от 1 до 5' 
+    });
+  }
+
+  try {
+    const query = `
+      INSERT INTO public.feedbacks (
+        client_id,
+        rating,
+        comment,
+        name,
+        is_visible
+      )
+      VALUES ($1, $2, $3, $4, false)
+      RETURNING id;
+    `;
+    
+    const result = await pool.query(query, [clientId, rating, comment, name]);
+    
+    res.status(201).json({
+      message: 'Отзыв успешно создан',
+      id: result.rows[0].id
     });
   } catch (err) {
     console.error(err);
